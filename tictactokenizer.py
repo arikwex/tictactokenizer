@@ -272,7 +272,13 @@ def sample_batch(
         seq_len = len(seq) - 1
         x[i, :seq_len] = torch.tensor(seq[:-1], dtype=torch.long)
         y[i, :seq_len] = torch.tensor(seq[1:], dtype=torch.long)
-        mask[i, :seq_len] = 1.0
+        # Only train on predicting the move immediately after the MOV token.
+        prefix = seq[:-1]
+        try:
+            mov_idx = prefix.index(MOV_ID)
+        except ValueError as exc:  # pragma: no cover - should never happen
+            raise RuntimeError("training sequence missing MOV token") from exc
+        mask[i, mov_idx] = 1.0
     return x.to(device), y.to(device), mask.to(device)
 
 
