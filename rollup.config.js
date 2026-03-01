@@ -155,9 +155,15 @@ const baseCss = `
   }
   .cell.x {
     color: #dc2626;
+    background: #fee2e2;
+    border-color: #fecaca;
+    font-size: 2.5rem;
   }
   .cell.o {
     color: #0891b2;
+    background: #cffafe;
+    border-color: #a5f3fc;
+    font-size: 2.5rem;
   }
   .status {
     text-align: center;

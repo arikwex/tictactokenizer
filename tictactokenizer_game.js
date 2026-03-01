@@ -238,11 +238,8 @@ function modelPickMove(params, board) {
   return bestMove;
 }
 
-function makeCellLabel(value, index) {
-  if (value === "_") {
-    return String(index + 1);
-  }
-  return value;
+function makeCellLabel(value) {
+  return value === "_" ? "" : value;
 }
 
 function setupGame(params) {
@@ -283,7 +280,7 @@ function setupGame(params) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "cell";
-    btn.textContent = makeCellLabel(board[i], i);
+    btn.textContent = makeCellLabel(board[i]);
     btn.addEventListener("click", () => {
       if (gameOver || thinking) return;
       if (board[i] !== "_") return;
@@ -303,7 +300,7 @@ function setupGame(params) {
   function updateBoard() {
     cells.forEach((cell, idx) => {
       const value = board[idx];
-      cell.textContent = makeCellLabel(value, idx);
+      cell.textContent = makeCellLabel(value);
       cell.classList.remove("x", "o", "disabled");
       if (value === "X") {
         cell.classList.add("x");
@@ -328,7 +325,7 @@ function setupGame(params) {
     setStatus("You are X and move first.");
     cells.forEach((cell, idx) => {
       cell.classList.remove("disabled", "x", "o");
-      cell.textContent = makeCellLabel("_", idx);
+      cell.textContent = makeCellLabel("_");
     });
     updateBoard();
   }
@@ -376,7 +373,7 @@ function setupGame(params) {
         cells.forEach((cell, idx) => {
           if (board[idx] === "_") {
             cell.classList.remove("disabled");
-            cell.textContent = makeCellLabel("_", idx);
+            cell.textContent = makeCellLabel("_");
           }
         });
         updateBoard();
