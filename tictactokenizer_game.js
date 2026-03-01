@@ -1,15 +1,9 @@
-"use strict";
-
-const fs = require("fs");
-const readline = require("readline");
-
-const WEIGHTS_PATH = "tictactokenizer_weights.pt";
+import weightBytes from "./tictactokenizer_weights.pt";
 
 const TOKENS = ["BOS", "MOV"]
   .concat(Array.from({ length: 9 }, (_, i) => String(i + 1)))
   .concat(["_", "X", "O"]);
 const stoi = Object.fromEntries(TOKENS.map((tok, idx) => [tok, idx]));
-const itos = Object.fromEntries(TOKENS.map((tok, idx) => [idx, tok]));
 const MOVE_TOKEN_IDS = Array.from({ length: 9 }, (_, i) => stoi[String(i + 1)]);
 const BOS_ID = stoi["BOS"];
 const MOV_ID = stoi["MOV"];
@@ -21,32 +15,21 @@ const blockSize = 12;
 const nHead = 2;
 const headDim = nEmb / nHead;
 
-const RED = "\x1b[31m";
-const TEAL = "\x1b[36m";
-const GRAY = "\x1b[90m";
-const RESET = "\x1b[0m";
+const WIN_PATTERNS = [
+  [0, 1, 2],
+  [3, 4, 5],
+  [6, 7, 8],
+  [0, 3, 6],
+  [1, 4, 7],
+  [2, 5, 8],
+  [0, 4, 8],
+  [2, 4, 6],
+];
 
-function expectFile(path, expectedBytes) {
-  if (!fs.existsSync(path)) {
-    console.error(
-      `Missing weights file at ${path}. Run tictactokenizer.py first.`,
-    );
-    process.exit(1);
-  }
-  const stats = fs.statSync(path);
-  if (stats.size !== expectedBytes) {
-    console.error(
-      `Weights file size mismatch. Expected ${expectedBytes} bytes, found ${stats.size}.`,
-    );
-    process.exit(1);
-  }
-}
-
-function loadQuantizedWeights(path) {
-  const raw = fs.readFileSync(path);
-  const values = new Float32Array(raw.length);
-  for (let i = 0; i < raw.length; i++) {
-    const byte = raw[i];
+function loadQuantizedWeights(bytes) {
+  const values = new Float32Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) {
+    const byte = bytes[i];
     const signed = byte >= 128 ? byte - 256 : byte;
     values[i] = Math.max(-1, Math.min(1, signed / 127));
   }
@@ -76,7 +59,7 @@ function loadQuantizedWeights(path) {
   }
   params.lmHead = takeMatrix(vocabSize, nEmb);
   if (offset !== values.length) {
-    throw new Error("Weight file contained extra or insufficient data.");
+    throw new Error("Weight file contained unexpected length.");
   }
   return params;
 }
@@ -203,17 +186,6 @@ function forward(params, idx) {
   return logits;
 }
 
-const WIN_PATTERNS = [
-  [0, 1, 2],
-  [3, 4, 5],
-  [6, 7, 8],
-  [0, 3, 6],
-  [1, 4, 7],
-  [2, 5, 8],
-  [0, 4, 8],
-  [2, 4, 6],
-];
-
 function currentPlayer(board) {
   const xCount = board.filter((c) => c === "X").length;
   const oCount = board.filter((c) => c === "O").length;
@@ -238,28 +210,6 @@ function checkWinner(board) {
     return "draw";
   }
   return null;
-}
-
-function renderBoard(board, showIndices = false) {
-  const rows = [];
-  for (let rowStart = 0; rowStart < 9; rowStart += 3) {
-    const cells = [];
-    for (let offset = 0; offset < 3; offset++) {
-      const idx = rowStart + offset;
-      const cell = board[idx];
-      if (cell === "_" && showIndices) {
-        cells.push(`${GRAY}${idx + 1}${RESET}`);
-      } else if (cell === "X") {
-        cells.push(`${RED}X${RESET}`);
-      } else if (cell === "O") {
-        cells.push(`${TEAL}O${RESET}`);
-      } else {
-        cells.push("_");
-      }
-    }
-    rows.push(cells.join(" | "));
-  }
-  return rows.join("\n---------\n");
 }
 
 function tokensForBoard(board) {
@@ -287,84 +237,156 @@ function modelPickMove(params, board) {
   return bestMove;
 }
 
-async function play(params) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  const ask = (prompt) =>
-    new Promise((resolve) => rl.question(prompt, resolve));
-
-  console.log(
-    "Interactive play started. You are X and move first. Ctrl+C to exit.\n",
-  );
-  try {
-    while (true) {
-      let board = Array(9).fill("_");
-      console.log(renderBoard(board));
-      while (true) {
-        console.log("\nYour move (enter 1-9 for the positions shown below):");
-        console.log(renderBoard(board, true));
-        const answer = await ask("> ");
-        if (!answer.trim()) continue;
-        if (!/^[1-9]$/.test(answer.trim())) {
-          console.log("Please enter a digit between 1 and 9.");
-          continue;
-        }
-        const move = Number(answer.trim());
-        if (board[move - 1] !== "_") {
-          console.log("Cell already occupied. Choose another move.");
-          continue;
-        }
-        board[move - 1] = "X";
-        console.log("\nYou played:");
-        console.log(renderBoard(board));
-        const winner = checkWinner(board);
-        if (winner) {
-          console.log(
-            `Game over: ${winner === "draw" ? "draw" : `${winner} wins!`}`,
-          );
-          break;
-        }
-
-        const aiMove = modelPickMove(params, board);
-        if (aiMove === -1) {
-          console.log("Model had no legal moves. Declaring draw.");
-          break;
-        }
-        const aiPlayer = currentPlayer(board);
-        board[aiMove] = aiPlayer;
-        console.log(`\nModel plays ${aiMove + 1} as ${aiPlayer}:`);
-        console.log(renderBoard(board));
-        const postWinner = checkWinner(board);
-        if (postWinner) {
-          console.log(
-            `Game over: ${
-              postWinner === "draw" ? "draw" : `${postWinner} wins!`
-            }`,
-          );
-          break;
-        }
-      }
-      console.log("\nStarting a new game...\n");
-    }
-  } finally {
-    rl.close();
+function makeCellLabel(value, index) {
+  if (value === "_") {
+    return String(index + 1);
   }
+  return value;
 }
 
-function main() {
-  const expectedBytes =
-    vocabSize * nEmb +
-    blockSize * nEmb +
-    nLayer * (4 * nEmb * nEmb + 4 * nEmb * nEmb + nEmb * (4 * nEmb)) +
-    vocabSize * nEmb;
-  expectFile(WEIGHTS_PATH, expectedBytes);
-  const params = loadQuantizedWeights(WEIGHTS_PATH);
-  play(params).catch((err) => {
-    console.error(err);
-    process.exit(1);
+function setupGame(params) {
+  const app = document.getElementById("app");
+  if (!app) {
+    throw new Error("Missing #app container");
+  }
+  let board = Array(9).fill("_");
+  let gameOver = false;
+  let thinking = false;
+
+  app.innerHTML = "";
+
+  const title = document.createElement("h1");
+  title.textContent = "TicTacTokenizer";
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "subtitle";
+  subtitle.textContent =
+    "A quantized transformer plays Tic-Tac-Toe entirely in your browser.";
+
+  const boardEl = document.createElement("div");
+  boardEl.className = "board";
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "status";
+
+  const newGameBtn = document.createElement("button");
+  newGameBtn.className = "new-game";
+  newGameBtn.type = "button";
+  newGameBtn.textContent = "New Game";
+
+  const cells = [];
+  for (let i = 0; i < 9; i++) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cell";
+    btn.textContent = makeCellLabel(board[i], i);
+    btn.addEventListener("click", () => {
+      if (gameOver || thinking) return;
+      if (board[i] !== "_") return;
+      board[i] = "X";
+      updateBoard();
+      maybeFinishTurn();
+    });
+    boardEl.appendChild(btn);
+    cells.push(btn);
+  }
+
+  function updateBoard() {
+    cells.forEach((cell, idx) => {
+      const value = board[idx];
+      cell.textContent = makeCellLabel(value, idx);
+      cell.classList.remove("x", "o", "disabled");
+      if (value === "X") {
+        cell.classList.add("x");
+      } else if (value === "O") {
+        cell.classList.add("o");
+      }
+      if (gameOver || thinking || value !== "_") {
+        cell.classList.add("disabled");
+      }
+    });
+  }
+
+  function setStatus(message) {
+    statusEl.textContent = message;
+  }
+
+  function resetGame() {
+    board = Array(9).fill("_");
+    gameOver = false;
+    thinking = false;
+    setStatus("You are X and move first.");
+    cells.forEach((cell, idx) => {
+      cell.classList.remove("disabled", "x", "o");
+      cell.textContent = makeCellLabel("_", idx);
+    });
+    updateBoard();
+  }
+
+  newGameBtn.addEventListener("click", () => {
+    resetGame();
   });
+
+  function conclude(result) {
+    gameOver = true;
+    thinking = false;
+    if (result === "draw") {
+      setStatus('Game over: draw. Hit "New Game" to try again.');
+    } else if (result === "X") {
+      setStatus('You win! Hit "New Game" for a rematch.');
+    } else {
+      setStatus('Model wins. Hit "New Game" to play again.');
+    }
+    updateBoard();
+  }
+
+  function maybeFinishTurn() {
+    const winner = checkWinner(board);
+    if (winner) {
+      conclude(winner);
+      return;
+    }
+    thinking = true;
+    updateBoard();
+    setStatus("Model thinking...");
+    window.setTimeout(() => {
+      const aiMove = modelPickMove(params, board);
+      if (aiMove === -1) {
+        conclude("draw");
+        return;
+      }
+      const aiPlayer = currentPlayer(board);
+      board[aiMove] = aiPlayer;
+      const afterWinner = checkWinner(board);
+      if (afterWinner) {
+        conclude(afterWinner);
+      } else {
+        thinking = false;
+        setStatus("Your turn.");
+        cells.forEach((cell, idx) => {
+          if (board[idx] === "_") {
+            cell.classList.remove("disabled");
+            cell.textContent = makeCellLabel("_", idx);
+          }
+        });
+        updateBoard();
+      }
+    }, 250);
+  }
+
+  resetGame();
+  app.appendChild(title);
+  app.appendChild(subtitle);
+  app.appendChild(boardEl);
+  app.appendChild(statusEl);
+  app.appendChild(newGameBtn);
 }
 
-main();
+const params = loadQuantizedWeights(weightBytes);
+
+const start = () => setupGame(params);
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", start, { once: true });
+} else {
+  start();
+}
