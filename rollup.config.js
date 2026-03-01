@@ -119,9 +119,36 @@ const baseCss = `
   }
   p.subtitle {
     margin-top: 0;
-    margin-bottom: 1.5rem;
+    margin-bottom: 0.75rem;
     text-align: center;
     color: #475569;
+  }
+  .param-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+  .param-grid div {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .param-grid .label {
+    text-transform: uppercase;
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+    color: #94a3b8;
+    margin-bottom: 0.1rem;
+  }
+  .param-grid .value {
+    font-weight: 600;
+    font-size: 1rem;
+    color: #0f172a;
   }
   .board {
     width: 100%;

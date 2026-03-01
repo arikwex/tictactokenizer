@@ -15,6 +15,7 @@ const nEmb = modelConfig.n_embd;
 const blockSize = modelConfig.block_size;
 const nHead = modelConfig.n_head;
 const headDim = nEmb / nHead;
+const weightSizeKB = (weightBytes.length / 1024).toFixed(1);
 
 const WIN_PATTERNS = [
   [0, 1, 2],
@@ -258,8 +259,30 @@ function setupGame(params) {
 
   const subtitle = document.createElement("p");
   subtitle.className = "subtitle";
-  subtitle.textContent =
-    "A quantized transformer plays Tic-Tac-Toe entirely in your browser.";
+  subtitle.textContent = "8 Bit Quantized Decoder Transformer";
+
+  const paramGrid = document.createElement("div");
+  paramGrid.className = "param-grid";
+  const specs = [
+    ["n_layer", nLayer],
+    ["n_embd", nEmb],
+    ["block_size", blockSize],
+    ["n_head", nHead],
+    ["vocab_size", vocabSize],
+    ["weights", `${weightSizeKB} KB`],
+  ];
+  specs.forEach(([label, value]) => {
+    const cell = document.createElement("div");
+    const labelEl = document.createElement("span");
+    labelEl.className = "label";
+    labelEl.textContent = label;
+    const valueEl = document.createElement("span");
+    valueEl.className = "value";
+    valueEl.textContent = String(value);
+    cell.appendChild(labelEl);
+    cell.appendChild(valueEl);
+    paramGrid.appendChild(cell);
+  });
 
   const boardEl = document.createElement("div");
   boardEl.className = "board";
@@ -384,6 +407,7 @@ function setupGame(params) {
   resetGame();
   app.appendChild(title);
   app.appendChild(subtitle);
+  app.appendChild(paramGrid);
   app.appendChild(boardEl);
   app.appendChild(tokenBar);
   app.appendChild(statusEl);
