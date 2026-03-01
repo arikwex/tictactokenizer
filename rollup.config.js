@@ -8,12 +8,36 @@ function inlineBinaryWeights() {
       if (!id.endsWith(".pt")) return null;
       const absPath = path.resolve(id);
       const bytes = fs.readFileSync(absPath);
-      const asNumbers = Array.from(bytes);
+      const base64 = bytes.toString("base64");
       const code = `
-        const data = new Uint8Array([${asNumbers.join(",")}]);
+        const base64 = "${base64}";
+        let binaryString;
+        if (typeof atob === "function") {
+          binaryString = atob(base64);
+        } else {
+          binaryString = Buffer.from(base64, "base64").toString("binary");
+        }
+        const data = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          data[i] = binaryString.charCodeAt(i);
+        }
         export default data;
       `;
       return code;
+    },
+  };
+}
+
+function inlineJsonConfig() {
+  return {
+    name: "inline-json-config",
+    load(id) {
+      if (!id.endsWith(".json")) return null;
+      const absPath = path.resolve(id);
+      const raw = fs.readFileSync(absPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const code = `export default ${JSON.stringify(parsed)};`;
+      return { code, map: { mappings: "" } };
     },
   };
 }
@@ -169,5 +193,9 @@ module.exports = {
     format: "iife",
     sourcemap: false,
   },
-  plugins: [inlineBinaryWeights(), singleFileHtml({ inlineCss: baseCss })],
+  plugins: [
+    inlineBinaryWeights(),
+    inlineJsonConfig(),
+    singleFileHtml({ inlineCss: baseCss }),
+  ],
 };

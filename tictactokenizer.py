@@ -5,6 +5,7 @@ Every training sample follows the sequence: BOS, [9 board cells], MOV, <move tok
 
 from __future__ import annotations
 
+import json
 import os
 import random
 from typing import List, Tuple
@@ -33,11 +34,16 @@ MOVE_TOKEN_IDS = [stoi[str(i)] for i in range(1, 10)]
 vocab_size = len(TOKENS)
 print(f"vocab size: {vocab_size}")
 
-# Hyperparameters
-n_layer = 2
-n_embd = 12
-block_size = 12  # BOS + 9 board cells + MOV
-n_head = 2
+# Hyperparameters loaded from shared config
+MODEL_CONFIG_PATH = "model_config.json"
+with open(MODEL_CONFIG_PATH, "r", encoding="utf-8") as cfg_file:
+    model_config = json.load(cfg_file)
+
+n_layer = model_config["n_layer"]
+n_embd = model_config["n_embd"]
+block_size = model_config["block_size"]  # BOS + 9 board cells + MOV
+n_head = model_config["n_head"]
+
 learning_rate, beta1, beta2, eps_adam = 0.01, 0.85, 0.99, 1e-8
 num_steps = 2000
 batch_size = 64

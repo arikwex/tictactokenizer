@@ -1,0 +1,6 @@
+{
+  "n_layer": 3,
+  "n_embd": 12,
+  "block_size": 12,
+  "n_head": 3
+}

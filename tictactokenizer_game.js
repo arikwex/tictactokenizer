@@ -1,4 +1,5 @@
 import weightBytes from "./tictactokenizer_weights.pt";
+import modelConfig from "./model_config.json";
 
 const TOKENS = ["BOS", "MOV"]
   .concat(Array.from({ length: 9 }, (_, i) => String(i + 1)))
@@ -9,10 +10,10 @@ const BOS_ID = stoi["BOS"];
 const MOV_ID = stoi["MOV"];
 
 const vocabSize = TOKENS.length;
-const nLayer = 2;
-const nEmb = 12;
-const blockSize = 12;
-const nHead = 2;
+const nLayer = modelConfig.n_layer;
+const nEmb = modelConfig.n_embd;
+const blockSize = modelConfig.block_size;
+const nHead = modelConfig.n_head;
 const headDim = nEmb / nHead;
 
 const WIN_PATTERNS = [
