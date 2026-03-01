@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TicTacTokenizer</title>
+  <meta name="description" content="Play Tic-Tac-Toe against a tiny Transformer model running entirely in your browser." />
+  <style>
+  :root {
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #0f172a;
+    background: #f8fafc;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #app {
+    width: min(480px, calc(100vw - 2rem));
+    padding: 1.5rem;
+    border-radius: 1rem;
+    background: white;
+    box-shadow: 0 20px 60px rgba(15, 23, 42, 0.15);
+  }
+  h1 {
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+    font-size: 1.75rem;
+    text-align: center;
+  }
+  p.subtitle {
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+    text-align: center;
+    color: #475569;
+  }
+  .board {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .cell {
+    aspect-ratio: 1 / 1;
+    border: 2px solid #e2e8f0;
+    border-radius: 0.75rem;
+    font-size: 1.75rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #0f172a;
+    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+    background: #f8fafc;
+  }
+  .cell:hover {
+    transform: translateY(-2px);
+    border-color: #94a3b8;
+  }
+  .cell.disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    transform: none;
+  }
+  .cell.x {
+    color: #dc2626;
+  }
+  .cell.o {
+    color: #0891b2;
+  }
+  .status {
+    text-align: center;
+    margin-bottom: 1rem;
+    font-weight: 600;
+  }
+  .token-bar {
+    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-size: 0.85rem;
+    background: #f1f5f9;
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+    text-align: center;
+    margin-bottom: 1rem;
+    white-space: nowrap;
+    overflow-x: auto;
+  }
+  button.new-game {
+    width: 100%;
+    border: none;
+    border-radius: 999px;
+    background: #0ea5e9;
+    color: white;
+    font-size: 1rem;
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+    box-shadow: 0 8px 20px rgba(14, 165, 233, 0.35);
+  }
+  button.new-game:hover {
+    background: #0284c7;
+    transform: translateY(-1px);
+  }
+  button.new-game:active {
+    transform: translateY(0);
+  }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>(function () {
+      'use strict';
+
+      const base64 = "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";
+              let binaryString;
+              if (typeof atob === "function") {
+                binaryString = atob(base64);
+              } else {
+                binaryString = Buffer.from(base64, "base64").toString("binary");
+              }
+              const data = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                data[i] = binaryString.charCodeAt(i);
+              }
+
+      var modelConfig = {"n_layer":3,"n_embd":12,"block_size":12,"n_head":3};
+
+      const TOKENS = ["BOS", "MOV"]
+        .concat(Array.from({ length: 9 }, (_, i) => String(i + 1)))
+        .concat(["_", "X", "O"]);
+      const stoi = Object.fromEntries(TOKENS.map((tok, idx) => [tok, idx]));
+      const MOVE_TOKEN_IDS = Array.from({ length: 9 }, (_, i) => stoi[String(i + 1)]);
+      const BOS_ID = stoi["BOS"];
+      const MOV_ID = stoi["MOV"];
+
+      const vocabSize = TOKENS.length;
+      const nLayer = modelConfig.n_layer;
+      const nEmb = modelConfig.n_embd;
+      const blockSize = modelConfig.block_size;
+      const nHead = modelConfig.n_head;
+      const headDim = nEmb / nHead;
+
+      const WIN_PATTERNS = [
+        [0, 1, 2],
+        [3, 4, 5],
+        [6, 7, 8],
+        [0, 3, 6],
+        [1, 4, 7],
+        [2, 5, 8],
+        [0, 4, 8],
+        [2, 4, 6],
+      ];
+
+      function loadQuantizedWeights(bytes) {
+        const values = new Float32Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) {
+          const byte = bytes[i];
+          const signed = byte >= 128 ? byte - 256 : byte;
+          values[i] = Math.max(-1, Math.min(1, signed / 127));
+        }
+        let offset = 0;
+        const takeMatrix = (rows, cols) => {
+          const mat = Array.from({ length: rows }, () => new Array(cols));
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              mat[r][c] = values[offset++];
+            }
+          }
+          return mat;
+        };
+        const params = {};
+        params.tokenEmb = takeMatrix(vocabSize, nEmb);
+        params.posEmb = takeMatrix(blockSize, nEmb);
+        params.blocks = [];
+        for (let layer = 0; layer < nLayer; layer++) {
+          params.blocks.push({
+            wq: takeMatrix(nEmb, nEmb),
+            wk: takeMatrix(nEmb, nEmb),
+            wv: takeMatrix(nEmb, nEmb),
+            wo: takeMatrix(nEmb, nEmb),
+            fc1: takeMatrix(4 * nEmb, nEmb),
+            fc2: takeMatrix(nEmb, 4 * nEmb),
+          });
+        }
+        params.lmHead = takeMatrix(vocabSize, nEmb);
+        if (offset !== values.length) {
+          throw new Error("Weight file contained unexpected length.");
+        }
+        return params;
+      }
+
+      function rmsnorm(vec) {
+        let meanSq = 0;
+        for (let i = 0; i < vec.length; i++) {
+          meanSq += vec[i] * vec[i];
+        }
+        meanSq /= vec.length;
+        const scale = 1 / Math.sqrt(meanSq + 1e-5);
+        return vec.map((v) => v * scale);
+      }
+
+      function linear(vec, weight) {
+        const out = new Array(weight.length);
+        for (let i = 0; i < weight.length; i++) {
+          let sum = 0;
+          const row = weight[i];
+          for (let j = 0; j < vec.length; j++) {
+            sum += row[j] * vec[j];
+          }
+          out[i] = sum;
+        }
+        return out;
+      }
+
+      function relu(vec) {
+        return vec.map((v) => (v > 0 ? v : 0));
+      }
+
+      function softmax(logits) {
+        let maxVal = -Infinity;
+        for (const val of logits) {
+          if (val > maxVal) maxVal = val;
+        }
+        const exps = logits.map((val) =>
+          val === -Infinity ? 0 : Math.exp(val - maxVal),
+        );
+        const sum = exps.reduce((acc, v) => acc + v, 0);
+        if (sum === 0) {
+          const len = logits.length;
+          return logits.map(() => 1 / len);
+        }
+        return exps.map((val) => val / sum);
+      }
+
+      function cloneMatrix(mat) {
+        return mat.map((row) => row.slice());
+      }
+
+      function forward(params, idx) {
+        const T = idx.length;
+        if (T > blockSize) {
+          throw new Error("Sequence length exceeds block size");
+        }
+        let x = Array.from({ length: T }, (_, t) => {
+          const vec = new Array(nEmb);
+          const tokenVec = params.tokenEmb[idx[t]];
+          const posVec = params.posEmb[t];
+          for (let i = 0; i < nEmb; i++) {
+            vec[i] = tokenVec[i] + posVec[i];
+          }
+          return rmsnorm(vec);
+        });
+
+        for (let layer = 0; layer < nLayer; layer++) {
+          const block = params.blocks[layer];
+          const xResidual = cloneMatrix(x);
+          const normed = x.map((vec) => rmsnorm(vec));
+          const q = normed.map((vec) => linear(vec, block.wq));
+          const k = normed.map((vec) => linear(vec, block.wk));
+          const v = normed.map((vec) => linear(vec, block.wv));
+          const attnOut = Array.from({ length: T }, () => new Array(nEmb).fill(0));
+          const scale = 1 / Math.sqrt(headDim);
+          for (let t = 0; t < T; t++) {
+            for (let h = 0; h < nHead; h++) {
+              const qOffset = h * headDim;
+              const scores = new Array(T).fill(-Infinity);
+              for (let tp = 0; tp <= t; tp++) {
+                let dot = 0;
+                for (let d = 0; d < headDim; d++) {
+                  dot += q[t][qOffset + d] * k[tp][qOffset + d];
+                }
+                scores[tp] = dot * scale;
+              }
+              const weights = softmax(scores);
+              const headVec = new Array(headDim).fill(0);
+              for (let tp = 0; tp <= t; tp++) {
+                const weight = weights[tp];
+                if (weight === 0) continue;
+                for (let d = 0; d < headDim; d++) {
+                  headVec[d] += weight * v[tp][qOffset + d];
+                }
+              }
+              for (let d = 0; d < headDim; d++) {
+                attnOut[t][qOffset + d] = headVec[d];
+              }
+            }
+          }
+          x = attnOut.map((vec, idxRow) => {
+            const proj = linear(vec, block.wo);
+            const out = new Array(nEmb);
+            for (let i = 0; i < nEmb; i++) {
+              out[i] = proj[i] + xResidual[idxRow][i];
+            }
+            return out;
+          });
+
+          const mlpResidual = cloneMatrix(x);
+          const mlpNormed = x.map((vec) => rmsnorm(vec));
+          const hidden = mlpNormed.map((vec) => relu(linear(vec, block.fc1)));
+          const mlpOut = hidden.map((vec) => linear(vec, block.fc2));
+          x = mlpOut.map((vec, idxRow) => {
+            const out = new Array(nEmb);
+            for (let i = 0; i < nEmb; i++) {
+              out[i] = vec[i] + mlpResidual[idxRow][i];
+            }
+            return out;
+          });
+        }
+
+        const logits = x.map((vec) => linear(vec, params.lmHead));
+        return logits;
+      }
+
+      function currentPlayer(board) {
+        const xCount = board.filter((c) => c === "X").length;
+        const oCount = board.filter((c) => c === "O").length;
+        return xCount === oCount ? "X" : "O";
+      }
+
+      function legalMoves(board) {
+        const moves = [];
+        board.forEach((cell, idx) => {
+          if (cell === "_") moves.push(idx);
+        });
+        return moves;
+      }
+
+      function checkWinner(board) {
+        for (const [a, b, c] of WIN_PATTERNS) {
+          if (board[a] !== "_" && board[a] === board[b] && board[b] === board[c]) {
+            return board[a];
+          }
+        }
+        if (board.every((cell) => cell !== "_")) {
+          return "draw";
+        }
+        return null;
+      }
+
+      function tokensForBoard(board) {
+        return [BOS_ID].concat(board.map((cell) => stoi[cell])).concat([MOV_ID]);
+      }
+
+      function modelPickMove(params, board) {
+        const moves = legalMoves(board);
+        if (moves.length === 0) {
+          return -1;
+        }
+        const contextTokens = tokensForBoard(board);
+        const logits = forward(params, contextTokens);
+        const lastLogits = logits[logits.length - 1];
+        let bestMove = moves[0];
+        let bestScore = -Infinity;
+        for (const move of moves) {
+          const tokenId = MOVE_TOKEN_IDS[move];
+          const score = lastLogits[tokenId];
+          if (score > bestScore) {
+            bestScore = score;
+            bestMove = move;
+          }
+        }
+        return bestMove;
+      }
+
+      function makeCellLabel(value, index) {
+        if (value === "_") {
+          return String(index + 1);
+        }
+        return value;
+      }
+
+      function setupGame(params) {
+        const app = document.getElementById("app");
+        if (!app) {
+          throw new Error("Missing #app container");
+        }
+        let board = Array(9).fill("_");
+        let gameOver = false;
+        let thinking = false;
+
+        app.innerHTML = "";
+
+        const title = document.createElement("h1");
+        title.textContent = "TicTacTokenizer";
+
+        const subtitle = document.createElement("p");
+        subtitle.className = "subtitle";
+        subtitle.textContent =
+          "A quantized transformer plays Tic-Tac-Toe entirely in your browser.";
+
+        const boardEl = document.createElement("div");
+        boardEl.className = "board";
+
+        const tokenBar = document.createElement("div");
+        tokenBar.className = "token-bar";
+
+        const statusEl = document.createElement("div");
+        statusEl.className = "status";
+
+        const newGameBtn = document.createElement("button");
+        newGameBtn.className = "new-game";
+        newGameBtn.type = "button";
+        newGameBtn.textContent = "New Game";
+
+        const cells = [];
+        for (let i = 0; i < 9; i++) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "cell";
+          btn.textContent = makeCellLabel(board[i], i);
+          btn.addEventListener("click", () => {
+            if (gameOver || thinking) return;
+            if (board[i] !== "_") return;
+            board[i] = "X";
+            updateBoard();
+            maybeFinishTurn();
+          });
+          boardEl.appendChild(btn);
+          cells.push(btn);
+        }
+
+        function updateTokens() {
+          const tokens = ["BOS"].concat(board).concat(["MOV"]);
+          tokenBar.textContent = tokens.map((tok) => `[${tok}]`).join("");
+        }
+
+        function updateBoard() {
+          cells.forEach((cell, idx) => {
+            const value = board[idx];
+            cell.textContent = makeCellLabel(value, idx);
+            cell.classList.remove("x", "o", "disabled");
+            if (value === "X") {
+              cell.classList.add("x");
+            } else if (value === "O") {
+              cell.classList.add("o");
+            }
+            if (gameOver || thinking || value !== "_") {
+              cell.classList.add("disabled");
+            }
+          });
+          updateTokens();
+        }
+
+        function setStatus(message) {
+          statusEl.textContent = message;
+        }
+
+        function resetGame() {
+          board = Array(9).fill("_");
+          gameOver = false;
+          thinking = false;
+          setStatus("You are X and move first.");
+          cells.forEach((cell, idx) => {
+            cell.classList.remove("disabled", "x", "o");
+            cell.textContent = makeCellLabel("_", idx);
+          });
+          updateBoard();
+        }
+
+        newGameBtn.addEventListener("click", () => {
+          resetGame();
+        });
+
+        function conclude(result) {
+          gameOver = true;
+          thinking = false;
+          if (result === "draw") {
+            setStatus('Game over: draw. Hit "New Game" to try again.');
+          } else if (result === "X") {
+            setStatus('You win! Hit "New Game" for a rematch.');
+          } else {
+            setStatus('Model wins. Hit "New Game" to play again.');
+          }
+          updateBoard();
+        }
+
+        function maybeFinishTurn() {
+          const winner = checkWinner(board);
+          if (winner) {
+            conclude(winner);
+            return;
+          }
+          thinking = true;
+          updateBoard();
+          setStatus("Model thinking...");
+          window.setTimeout(() => {
+            const aiMove = modelPickMove(params, board);
+            if (aiMove === -1) {
+              conclude("draw");
+              return;
+            }
+            const aiPlayer = currentPlayer(board);
+            board[aiMove] = aiPlayer;
+            const afterWinner = checkWinner(board);
+            if (afterWinner) {
+              conclude(afterWinner);
+            } else {
+              thinking = false;
+              setStatus("Your turn.");
+              cells.forEach((cell, idx) => {
+                if (board[idx] === "_") {
+                  cell.classList.remove("disabled");
+                  cell.textContent = makeCellLabel("_", idx);
+                }
+              });
+              updateBoard();
+            }
+          }, 250);
+        }
+
+        resetGame();
+        app.appendChild(title);
+        app.appendChild(subtitle);
+        app.appendChild(boardEl);
+        app.appendChild(tokenBar);
+        app.appendChild(statusEl);
+        app.appendChild(newGameBtn);
+      }
+
+      const params = loadQuantizedWeights(data);
+
+      const start = () => setupGame(params);
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", start, { once: true });
+      } else {
+        start();
+      }
+
+})();
+</script>
+</body>
+</html>

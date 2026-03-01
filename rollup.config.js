@@ -200,7 +200,7 @@ const baseCss = `
 module.exports = {
   input: "tictactokenizer_game.js",
   output: {
-    file: "dist/bundle.js",
+    file: "public/bundle.js",
     format: "iife",
     sourcemap: false,
   },
