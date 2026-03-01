@@ -5,6 +5,7 @@ Every training sample follows the sequence: BOS, [9 board cells], MOV, <move tok
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import random
@@ -427,7 +428,60 @@ def load_quantized_weights(model: MicroGPT, path: str) -> None:
     model.load_state_dict(new_state)
 
 
+def run_training(model: MicroGPT, engine: TicTacToeEngine, device: torch.device) -> None:
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=(beta1, beta2), eps=eps_adam)
+
+    for step in range(num_steps):
+        model.train()
+        xb, yb, mask = sample_batch(batch_size, block_size, engine, device)
+        logits = model(xb)
+        loss_all = F.cross_entropy(
+            logits.view(-1, vocab_size),
+            yb.view(-1),
+            reduction="none",
+        )
+        loss = (loss_all * mask.view(-1)).sum() / mask.sum()
+        optimizer.zero_grad()
+        loss.backward()
+        lr_t = learning_rate * (1 - step / num_steps)
+        for group in optimizer.param_groups:
+            group["lr"] = lr_t
+        optimizer.step()
+        print(f"step {step + 1:4d} / {num_steps:4d} | loss {loss.item():.4f}", end="\r")
+
+    save_quantized_weights(model, weights_path)
+    print(f"\nSaved quantized weights to {weights_path}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Train and interact with the TicTacTokenizer micro transformer.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--train",
+        action="store_true",
+        help="Train the model from scratch and overwrite the quantized weights file.",
+    )
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Print model move previews on random boards.",
+    )
+    parser.add_argument(
+        "--play",
+        action="store_true",
+        help="Launch the interactive CLI game against the model.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+    if not (args.train or args.preview or args.play):
+        print("No action specified. Use one or more of --train, --preview, --play.")
+        return
+
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
@@ -439,36 +493,21 @@ def main() -> None:
     model = MicroGPT(vocab_size, n_embd, n_head, n_layer, block_size).to(device)
     expected_bytes = _param_count(model)
 
-    if os.path.exists(weights_path) and os.path.getsize(weights_path) == expected_bytes:
+    weights_exist = os.path.exists(weights_path) and os.path.getsize(weights_path) == expected_bytes
+
+    if args.train or not weights_exist:
+        if not args.train and not weights_exist:
+            print("Weights missing or invalid size; training a new model.")
+        run_training(model, engine, device)
+    else:
         load_quantized_weights(model, weights_path)
         model.to(device)
         print(f"Loaded weights from {weights_path}")
-    else:
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=(beta1, beta2), eps=eps_adam)
 
-        for step in range(num_steps):
-            model.train()
-            xb, yb, mask = sample_batch(batch_size, block_size, engine, device)
-            logits = model(xb)
-            loss_all = F.cross_entropy(
-                logits.view(-1, vocab_size),
-                yb.view(-1),
-                reduction="none",
-            )
-            loss = (loss_all * mask.view(-1)).sum() / mask.sum()
-            optimizer.zero_grad()
-            loss.backward()
-            lr_t = learning_rate * (1 - step / num_steps)
-            for group in optimizer.param_groups:
-                group["lr"] = lr_t
-            optimizer.step()
-            print(f"step {step + 1:4d} / {num_steps:4d} | loss {loss.item():.4f}", end="\r")
-
-        save_quantized_weights(model, weights_path)
-        print(f"\nSaved quantized weights to {weights_path}")
-
-    preview_model(model, engine, device)
-    interactive_loop(model, device)
+    if args.preview:
+        preview_model(model, engine, device)
+    if args.play:
+        interactive_loop(model, device)
 
 
 if __name__ == "__main__":
