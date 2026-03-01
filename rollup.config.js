@@ -164,6 +164,17 @@ const baseCss = `
     margin-bottom: 1rem;
     font-weight: 600;
   }
+  .token-bar {
+    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-size: 0.85rem;
+    background: #f1f5f9;
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+    text-align: center;
+    margin-bottom: 1rem;
+    white-space: nowrap;
+    overflow-x: auto;
+  }
   button.new-game {
     width: 100%;
     border: none;

@@ -267,6 +267,9 @@ function setupGame(params) {
   const boardEl = document.createElement("div");
   boardEl.className = "board";
 
+  const tokenBar = document.createElement("div");
+  tokenBar.className = "token-bar";
+
   const statusEl = document.createElement("div");
   statusEl.className = "status";
 
@@ -292,6 +295,11 @@ function setupGame(params) {
     cells.push(btn);
   }
 
+  function updateTokens() {
+    const tokens = ["BOS"].concat(board).concat(["MOV"]);
+    tokenBar.textContent = tokens.map((tok) => `[${tok}]`).join("");
+  }
+
   function updateBoard() {
     cells.forEach((cell, idx) => {
       const value = board[idx];
@@ -306,6 +314,7 @@ function setupGame(params) {
         cell.classList.add("disabled");
       }
     });
+    updateTokens();
   }
 
   function setStatus(message) {
@@ -379,6 +388,7 @@ function setupGame(params) {
   app.appendChild(title);
   app.appendChild(subtitle);
   app.appendChild(boardEl);
+  app.appendChild(tokenBar);
   app.appendChild(statusEl);
   app.appendChild(newGameBtn);
 }
