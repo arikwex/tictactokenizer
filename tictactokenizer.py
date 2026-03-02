@@ -297,10 +297,15 @@ def sample_batch(
     return x.to(device), y.to(device), mask.to(device)
 
 
-def _value_to_grayscale(val: float) -> int:
+def _value_to_color(val: float) -> Tuple[int, int, int]:
     clipped = max(-1.0, min(1.0, float(val)))
-    normalized = (clipped + 1.0) * 0.5  # map [-1, 1] -> [0, 1]
-    return int(round(normalized * 255))
+    t = (clipped + 1.0) * 0.5  # map [-1, 1] -> [0, 1]
+    start = (6, 16, 64)  # dark blue
+    end = (0, 255, 128)  # bright green
+    r = int(round(start[0] + (end[0] - start[0]) * t))
+    g = int(round(start[1] + (end[1] - start[1]) * t))
+    b = int(round(start[2] + (end[2] - start[2]) * t))
+    return (r, g, b)
 
 
 def render_activation_grid(activations: List[torch.Tensor], token_ids: List[int], path: str) -> None:
@@ -323,7 +328,7 @@ def render_activation_grid(activations: List[torch.Tensor], token_ids: List[int]
     content_left = border + row_label_width
     img_width = content_left + len(mats) * cell_width + (len(mats) - 1) * stage_spacing + border
     img_height = content_top + token_count * cell_height + (token_count - 1) * token_spacing + border
-    img = Image.new("RGB", (img_width, img_height), color="white")
+    img = Image.new("RGB", (img_width, img_height), color="#05060a")
     draw = ImageDraw.Draw(img)
     font = ImageFont.load_default()
 
@@ -335,13 +340,23 @@ def render_activation_grid(activations: List[torch.Tensor], token_ids: List[int]
     for idx_stage, label in enumerate(stage_labels):
         x = content_left + idx_stage * (cell_width + stage_spacing)
         text_w, text_h = measure(label)
-        draw.text((x + (cell_width - text_w) / 2, border + (label_height - text_h) / 2), label, fill="#0f172a", font=font)
+        draw.text(
+            (x + (cell_width - text_w) / 2, border + (label_height - text_h) / 2),
+            label,
+            fill="#f8fafc",
+            font=font,
+        )
 
     token_labels = [itos[token_id] for token_id in token_ids]
     for token_idx, label in enumerate(token_labels):
         y = content_top + token_idx * (cell_height + token_spacing)
         text_w, text_h = measure(label)
-        draw.text((border + row_label_width - text_w - 6, y + (cell_height - text_h) / 2), label, fill="#475569", font=font)
+        draw.text(
+            (border + row_label_width - text_w - 6, y + (cell_height - text_h) / 2),
+            label,
+            fill="#e2e8f0",
+            font=font,
+        )
 
     for stage_idx, stage_mat in enumerate(mats):
         x0 = content_left + stage_idx * (cell_width + stage_spacing)
@@ -350,12 +365,12 @@ def render_activation_grid(activations: List[torch.Tensor], token_ids: List[int]
             vec = stage_mat[token_idx]
             for dim_idx in range(embed_dim):
                 val = vec[dim_idx].item()
-                color = _value_to_grayscale(val)
+                color = _value_to_color(val)
                 y_start = y0 + dim_idx * dim_height
                 y_end = y_start + dim_height - 1
                 draw.rectangle(
                     [x0, y_start, x0 + cell_width - 1, y_end],
-                    fill=(color, color, color),
+                    fill=color,
                 )
 
     img.save(path)
