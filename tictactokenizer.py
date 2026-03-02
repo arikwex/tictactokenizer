@@ -50,7 +50,7 @@ n_head = model_config["n_head"]
 
 learning_rate, beta1, beta2, eps_adam = 0.01, 0.85, 0.99, 1e-8
 num_steps = 4000
-batch_size = 64
+batch_size = 128
 weights_path = "tictactokenizer_weights.pt"
 
 class TicTacToeEngine:
@@ -207,7 +207,6 @@ class MicroGPT(nn.Module):
         self.blocks = nn.ModuleList(
             [GPTBlock(n_embd=n_embd, n_head=n_head, block_size=block_size) for _ in range(n_layer)]
         )
-        self.post_block_norms = nn.ModuleList([nn.LayerNorm(n_embd) for _ in range(n_layer)])
         self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
         self.apply(self._init_weights)
 
@@ -223,7 +222,6 @@ class MicroGPT(nn.Module):
         x = self.input_norm(x)
         for idx, block in enumerate(self.blocks):
             x = block(x)
-            # x = self.post_block_norms[idx](x)
         logits = self.lm_head(x)
         return logits
 
@@ -236,7 +234,6 @@ class MicroGPT(nn.Module):
         activations = [x.detach().cpu()]
         for idx, block in enumerate(self.blocks):
             x = block(x)
-            # x = self.post_block_norms[idx](x)
             activations.append(x.detach().cpu())
         logits = F.softmax(self.lm_head(x), dim=-1) * 2 - 1
         return logits, activations

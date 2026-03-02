@@ -36,14 +36,18 @@ function loadQuantizedWeights(bytes) {
     values[i] = Math.max(-1, Math.min(1, signed / 127));
   }
   let offset = 0;
-  const takeMatrix = (rows, cols) => {
-    const mat = Array.from({ length: rows }, () => new Array(cols));
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        mat[r][c] = values[offset++];
+  const takeVector = (size) => {
+    const vec = new Array(size);
+    for (let i = 0; i < size; i++) {
+      if (offset >= values.length) {
+        throw new Error("Weight file ended unexpectedly.");
       }
+      vec[i] = values[offset++];
     }
-    return mat;
+    return vec;
+  };
+  const takeMatrix = (rows, cols) => {
+    return Array.from({ length: rows }, () => takeVector(cols));
   };
   const params = {};
   params.tokenEmb = takeMatrix(vocabSize, nEmb);
