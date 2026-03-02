@@ -181,6 +181,7 @@ class MicroGPT(nn.Module):
         self.blocks = nn.ModuleList(
             [GPTBlock(n_embd=n_embd, n_head=n_head, block_size=block_size) for _ in range(n_layer)]
         )
+        self.post_block_norms = nn.ModuleList([nn.LayerNorm(n_embd) for _ in range(n_layer)])
         self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
         self.apply(self._init_weights)
 
@@ -194,8 +195,9 @@ class MicroGPT(nn.Module):
         positions = torch.arange(T, device=idx.device).unsqueeze(0)
         x = self.token_emb(idx) + self.pos_emb(positions)
         x = self.input_norm(x)
-        for block in self.blocks:
+        for idx, block in enumerate(self.blocks):
             x = block(x)
+            x = self.post_block_norms[idx](x)
         logits = self.lm_head(x)
         return logits
 
@@ -206,8 +208,9 @@ class MicroGPT(nn.Module):
         x = self.token_emb(idx) + self.pos_emb(positions)
         x = self.input_norm(x)
         activations = [x.detach().cpu()]
-        for block in self.blocks:
+        for idx, block in enumerate(self.blocks):
             x = block(x)
+            x = self.post_block_norms[idx](x)
             activations.append(x.detach().cpu())
         logits = self.lm_head(x)
         return logits, activations
