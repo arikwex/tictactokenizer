@@ -421,7 +421,7 @@ def render_activation_grid(
     img.save(path)
 
 
-def introspect_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.device, path: str = "introspect_activations.png") -> None:
+def introspect_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.device, path: str = "current_introspection.png") -> None:
     model.eval()
     board, move = engine.random_state_and_move()
     context_tokens = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]
@@ -606,7 +606,12 @@ def load_quantized_weights(model: MicroGPT, path: str) -> None:
     model.load_state_dict(new_state)
 
 
-def run_training(model: MicroGPT, engine: TicTacToeEngine, device: torch.device) -> None:
+def run_training(
+    model: MicroGPT,
+    engine: TicTacToeEngine,
+    device: torch.device,
+    introspect: bool = False,
+) -> None:
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=(beta1, beta2), eps=eps_adam)
 
     for step in range(num_steps):
@@ -626,6 +631,22 @@ def run_training(model: MicroGPT, engine: TicTacToeEngine, device: torch.device)
             group["lr"] = lr_t
         optimizer.step()
         print(f"step {step + 1:4d} / {num_steps:4d} | loss {loss.item():.4f}", end="\r")
+
+        if introspect and (step + 1) % 100 == 0:
+            try:
+                board, _ = engine.random_state_and_move()
+            except Exception:
+                board = ["_"] * 9
+            tokens = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]
+            idx = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
+            with torch.no_grad():
+                _, activations = model.forward_with_activations(idx)
+            render_activation_grid(
+                activations,
+                tokens,
+                "current_introspection.png",
+                board=board,
+            )
 
     save_quantized_weights(model, weights_path)
     print(f"\nSaved quantized weights to {weights_path}")
@@ -681,7 +702,7 @@ def main() -> None:
     if args.train or not weights_exist:
         if not args.train and not weights_exist:
             print("Weights missing or invalid size; training a new model.")
-        run_training(model, engine, device)
+        run_training(model, engine, device, introspect=args.introspect)
     else:
         load_quantized_weights(model, weights_path)
         model.to(device)
