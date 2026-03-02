@@ -35,6 +35,8 @@ MOV_ID = stoi["MOV"]
 MOVE_TOKEN_IDS = [stoi[str(i)] for i in range(1, 10)]
 vocab_size = len(TOKENS)
 print(f"vocab size: {vocab_size}")
+# introspection_board = ["_", "X", "O", "_", "X", "_", "_", "_", "_"]
+introspection_board = ["_", "_", "_", "_", "X", "_", "X", "O", "_"]
 
 # Hyperparameters loaded from shared config
 MODEL_CONFIG_PATH = "model_config.json"
@@ -46,11 +48,10 @@ n_embd = model_config["n_embd"]
 block_size = model_config["block_size"]  # BOS + 9 board cells + MOV
 n_head = model_config["n_head"]
 
-learning_rate, beta1, beta2, eps_adam = 0.01, 0.85, 0.99, 1e-8
+learning_rate, beta1, beta2, eps_adam = 0.006, 0.85, 0.99, 1e-8
 num_steps = 2000
-batch_size = 64
+batch_size = 8
 weights_path = "tictactokenizer_weights.pt"
-
 
 class TicTacToeEngine:
     WIN_PATTERNS: Tuple[Tuple[int, int, int], ...] = (
@@ -95,10 +96,40 @@ class TicTacToeEngine:
         if "_" not in board_ref:
             return "draw"
         return None
+    
+    def select_best_move(self, board: List[str]) -> int:
+        legal = self.legal_moves(board)
+        if not legal:
+            return -1
+        player = self.current_player(board)
+        opponent = "O" if player == "X" else "X"
 
-    def random_state_and_move(self) -> Tuple[List[str], int]:
-        _, board, move = generate_training_sequence(self, return_state=True)
-        return board, move
+        # Prefer to win on the next move
+        winning = []
+        for move in legal:
+            temp = board.copy()
+            temp[move] = player
+            if self.check_winner(temp) == player:
+                winning.append(move)
+        if winning:
+            return random.choice(winning)
+
+        # Prevent the opponent from winning on the next move
+        blocking = []
+        for move in legal:
+            temp = board.copy()
+            temp[move] = opponent
+            if self.check_winner(temp) == opponent:
+                blocking.append(move)
+        if blocking:
+            return random.choice(blocking)
+
+        # If the center is empty, return it
+        if board[4] == "_":
+            return 4
+        
+        #  Otherwise random valid move
+        return random.choice(legal)
 
     def pretty(self, board: List[str] | None = None, show_indices: bool = False, colored: bool = True) -> str:
         board_ref = self.board if board is None else board
@@ -138,7 +169,10 @@ class MultiHeadAttention(nn.Module):
         self.wk = nn.Linear(n_embd, n_embd, bias=False)
         self.wv = nn.Linear(n_embd, n_embd, bias=False)
         self.wo = nn.Linear(n_embd, n_embd, bias=False)
-        mask = torch.tril(torch.ones(block_size, block_size, dtype=torch.bool)).view(
+        # mask = torch.tril(torch.ones(block_size, block_size, dtype=torch.bool)).view(
+        #     1, 1, block_size, block_size
+        # )
+        mask = torch.ones(block_size, block_size, dtype=torch.bool).view(
             1, 1, block_size, block_size
         )
         self.register_buffer("mask", mask, persistent=False)
@@ -212,47 +246,13 @@ class MicroGPT(nn.Module):
             x = block(x)
             x = self.post_block_norms[idx](x)
             activations.append(x.detach().cpu())
-        logits = self.lm_head(x)
+        logits = F.softmax(self.lm_head(x), dim=-1) * 2 - 1
         return logits, activations
 
 
 def generate_training_sequence(
     engine: TicTacToeEngine, return_state: bool = False
 ) -> List[int] | Tuple[List[int], List[str], int]:
-    def select_best_move(board: List[str]) -> int:
-        legal = engine.legal_moves(board)
-        if not legal:
-            return -1
-        player = engine.current_player(board)
-        opponent = "O" if player == "X" else "X"
-
-        # Prefer to win on the next move
-        winning = []
-        for move in legal:
-            temp = board.copy()
-            temp[move] = player
-            if engine.check_winner(temp) == player:
-                winning.append(move)
-        if winning:
-            return random.choice(winning)
-
-        # Prevent the opponent from winning on the next move
-        blocking = []
-        for move in legal:
-            temp = board.copy()
-            temp[move] = opponent
-            if engine.check_winner(temp) == opponent:
-                blocking.append(move)
-        if blocking:
-            return random.choice(blocking)
-
-        # If the center is empty, return it
-        if board[4] == "_":
-            return 4
-        
-        #  Otherwise random valid move
-        return random.choice(legal)
-
     board: List[str]
     while True:
         board = ["_"] * 9
@@ -268,7 +268,7 @@ def generate_training_sequence(
         if engine.check_winner(board) is None and engine.legal_moves(board):
             break
 
-    move = select_best_move(board)
+    move = engine.select_best_move(board)
     seq = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID, stoi[str(move + 1)]]
     if return_state:
         return seq, board.copy(), move
@@ -291,12 +291,13 @@ def sample_batch(
         x[i, :seq_len] = torch.tensor(seq[:-1], dtype=torch.long)
         y[i, :seq_len] = torch.tensor(seq[1:], dtype=torch.long)
         # Only train on predicting the move immediately after the MOV token.
-        prefix = seq[:-1]
-        try:
-            mov_idx = prefix.index(MOV_ID)
-        except ValueError as exc:  # pragma: no cover - should never happen
-            raise RuntimeError("training sequence missing MOV token") from exc
-        mask[i, mov_idx] = 1.0
+        # prefix = seq[:-1]
+        # try:
+        #     mov_idx = prefix.index(MOV_ID)
+        # except ValueError as exc:  # pragma: no cover - should never happen
+        #     raise RuntimeError("training sequence missing MOV token") from exc
+        # mask[i, mov_idx] = 1.0
+        mask[i, -1] = 1.0
     return x.to(device), y.to(device), mask.to(device)
 
 
@@ -392,10 +393,17 @@ def render_activation_grid(
         y_board = img_height - border - board_height
         board_tensor = board_activations.squeeze(0)[-1]
         board_colors: List[Tuple[int, int, int]] = []
+        argmax_idx = -1
+        max_val = -float("inf")
+        print(board_tensor)
         for idx_cell in range(len(board)):
             token_idx = 2 + idx_cell
             val = torch.tanh(board_tensor[token_idx]).item()
+            if val > max_val:
+                max_val = val
+                argmax_idx = idx_cell
             board_colors.append(_value_to_color(val))
+        # board_colors[argmax_idx] = (255, 0, 0)
         for row in range(3):
             for col in range(3):
                 idx_cell = row * 3 + col
@@ -421,54 +429,17 @@ def render_activation_grid(
     img.save(path)
 
 
-def introspect_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.device, path: str = "current_introspection.png") -> None:
+def introspect_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.device, board: List[str], path: str = "current_introspection.png") -> None:
     model.eval()
-    board, move = engine.random_state_and_move()
     context_tokens = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]
     idx = torch.tensor(context_tokens, dtype=torch.long, device=device).unsqueeze(0)
     with torch.no_grad():
         board_activations, activations = model.forward_with_activations(idx)
-    board_context_tokens = context_tokens
-    render_activation_grid(activations, board_context_tokens, path, board=board, board_activations=board_activations)
+    render_activation_grid(activations, context_tokens, path, board=board, board_activations=board_activations)
     human_board = engine.pretty(board, colored=False)
     print("Generated introspection sample:")
     print(human_board)
-    print(f"Target move: {move + 1}")
     print(f"Saved activation visualization to {path}")
-
-
-def preview_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.device, samples: int = 5) -> None:
-    print("\n--- inference (tic-tac-toe move previews) ---")
-    model.eval()
-    with torch.no_grad():
-        for sample_idx in range(samples):
-            board, _ = engine.random_state_and_move()
-            context = torch.tensor(
-                [[BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]],
-                dtype=torch.long,
-                device=device,
-            )
-            logits = model(context)[:, -1, :]
-            probs = F.softmax(logits, dim=-1)
-            move_probs = probs[:, MOVE_TOKEN_IDS]
-            move_choice = torch.argmax(move_probs, dim=-1).item()
-            move_token = MOVE_TOKEN_IDS[move_choice]
-            move = int(itos[move_token])
-            player = engine.current_player(board)
-            before = engine.pretty(board)
-            after_board = board.copy()
-            validity = "valid"
-            if after_board[move - 1] == "_":
-                after_board[move - 1] = player
-            else:
-                validity = "invalid (cell already taken)"
-            after = engine.pretty(after_board)
-            print(f"sample {sample_idx + 1:2d} | predicted move {move} for player {player} -> {validity}")
-            print("before:")
-            print(before)
-            print("after :")
-            print(after)
-            print("-" * 21)
 
 
 def model_choose_move(model: MicroGPT, board: List[str], device: torch.device, engine: TicTacToeEngine) -> int:
@@ -492,32 +463,15 @@ def model_choose_move(model: MicroGPT, board: List[str], device: torch.device, e
     return int(itos[MOVE_TOKEN_IDS[move_idx]])
 
 
-def maybe_introspect_during_play(
-    model: MicroGPT,
-    engine: TicTacToeEngine,
-    device: torch.device,
-    board: List[str],
-    introspect: bool,
-) -> None:
-    if not introspect:
-        return
-    tokens = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]
-    idx = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
-    with torch.no_grad():
-        board_activations, activations = model.forward_with_activations(idx)
-    path = "current_introspection.png"
-    render_activation_grid(activations, tokens, path, board=board, board_activations=board_activations)
-    print(f"Saved activation visualization to {path}")
-
-
 def interactive_loop(model: MicroGPT, device: torch.device, introspect: bool = False) -> None:
     engine = TicTacToeEngine()
     print("\nInteractive play started. You are X and move first. Ctrl+C to exit.\n")
     while True:
         board = ["_"] * 9
         print(engine.pretty(board))
-        maybe_introspect_during_play(model, engine, device, board, introspect)
         while True:
+            if introspect:
+                introspect_model(model, engine, device, board)
             print("\nYour move (enter 1-9 for the positions shown below):")
             print(engine.pretty(board, show_indices=True))
             try:
@@ -538,29 +492,24 @@ def interactive_loop(model: MicroGPT, device: torch.device, introspect: bool = F
             board[move - 1] = "X"
             print("\nYou played:")
             print(engine.pretty(board))
-            maybe_introspect_during_play(model, engine, device, board, introspect)
             winner = engine.check_winner(board)
             if winner or "_" not in board:
                 result = "draw" if winner == "draw" or winner is None else f"{winner} wins!"
                 print(f"Game over: {result}")
-                maybe_introspect_during_play(model, engine, device, board, introspect)
                 break
 
             ai_player = engine.current_player(board)
             ai_move = model_choose_move(model, board, device, engine)
             if ai_move == -1:
                 print("Model had no legal moves. Declaring draw.")
-                maybe_introspect_during_play(model, engine, device, board, introspect)
                 break
             board[ai_move - 1] = ai_player
             print(f"\nModel plays {ai_move} as {ai_player}:")
             print(engine.pretty(board))
-            maybe_introspect_during_play(model, engine, device, board, introspect)
             winner = engine.check_winner(board)
             if winner or "_" not in board:
                 result = "draw" if winner == "draw" or winner is None else f"{winner} wins!"
                 print(f"Game over: {result}")
-                maybe_introspect_during_play(model, engine, device, board, introspect)
                 break
 
         print("\nStarting a new game...\n")
@@ -633,20 +582,7 @@ def run_training(
         print(f"step {step + 1:4d} / {num_steps:4d} | loss {loss.item():.4f}", end="\r")
 
         if introspect and (step + 1) % 100 == 0:
-            try:
-                board, _ = engine.random_state_and_move()
-            except Exception:
-                board = ["_"] * 9
-            tokens = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]
-            idx = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
-            with torch.no_grad():
-                _, activations = model.forward_with_activations(idx)
-            render_activation_grid(
-                activations,
-                tokens,
-                "current_introspection.png",
-                board=board,
-            )
+            introspect_model(model, engine, device, introspection_board)
 
     save_quantized_weights(model, weights_path)
     print(f"\nSaved quantized weights to {weights_path}")
@@ -661,11 +597,6 @@ def parse_args() -> argparse.Namespace:
         "--train",
         action="store_true",
         help="Train the model from scratch and overwrite the quantized weights file.",
-    )
-    parser.add_argument(
-        "--preview",
-        action="store_true",
-        help="Print model move previews on random boards.",
     )
     parser.add_argument(
         "--play",
@@ -708,13 +639,18 @@ def main() -> None:
         model.to(device)
         print(f"Loaded weights from {weights_path}")
 
-    if args.preview:
-        preview_model(model, engine, device)
     if args.introspect and not args.play:
-        introspect_model(model, engine, device)
+        introspect_model(model, engine, device, introspection_board)
     if args.play:
         interactive_loop(model, device, introspect=args.introspect)
 
 
 if __name__ == "__main__":
     main()
+    # engine_test = TicTacToeEngine()
+    # engine_test.apply_move(1)
+    # engine_test.apply_move(2)
+    # engine_test.apply_move(4)
+    # print(engine_test.pretty() + "\n")
+    # print(engine_test.legal_moves())
+    # print(engine_test.select_best_move(engine_test.board))
