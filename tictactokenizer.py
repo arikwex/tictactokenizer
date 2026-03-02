@@ -308,7 +308,13 @@ def _value_to_color(val: float) -> Tuple[int, int, int]:
     return (r, g, b)
 
 
-def render_activation_grid(activations: List[torch.Tensor], token_ids: List[int], path: str) -> None:
+def render_activation_grid(
+    activations: List[torch.Tensor],
+    token_ids: List[int],
+    path: str,
+    board: List[str] | None = None,
+    board_embedding: torch.Tensor | None = None,
+) -> None:
     stage_labels = ["input"] + [f"block {i + 1}" for i in range(len(activations) - 1)]
     mats = [act.squeeze(0).cpu() for act in activations]
     token_count = mats[0].shape[0]
@@ -326,7 +332,10 @@ def render_activation_grid(activations: List[torch.Tensor], token_ids: List[int]
     cell_height = embed_dim * dim_height
     content_top = border + label_height + 8
     content_left = border + row_label_width
-    img_width = content_left + len(mats) * cell_width + (len(mats) - 1) * stage_spacing + border
+    board_column_width = 150 if board is not None else 0
+    activation_width = len(mats) * cell_width + (len(mats) - 1) * stage_spacing
+    board_spacing = stage_spacing if board is not None else 0
+    img_width = content_left + activation_width + board_spacing + board_column_width + border
     img_height = content_top + token_count * cell_height + (token_count - 1) * token_spacing + border
     img = Image.new("RGB", (img_width, img_height), color="#05060a")
     draw = ImageDraw.Draw(img)
@@ -373,6 +382,40 @@ def render_activation_grid(activations: List[torch.Tensor], token_ids: List[int]
                     fill=color,
                 )
 
+    if board is not None and board_embedding is not None and board_column_width > 0:
+        cell_size = board_column_width // 3
+        board_height = cell_size * 3
+        x_board = content_left + activation_width + board_spacing
+        y_board = img_height - border - board_height
+        board_tensor = board_embedding.squeeze(0)
+        board_colors: List[Tuple[int, int, int]] = []
+        for idx_cell in range(len(board)):
+            token_idx = min(1 + idx_cell, board_tensor.shape[0] - 1)
+            vec = board_tensor[token_idx]
+            mean_val = torch.tanh(vec.mean()).item()
+            board_colors.append(_value_to_color(mean_val))
+        for row in range(3):
+            for col in range(3):
+                idx_cell = row * 3 + col
+                cell_x = x_board + col * cell_size
+                cell_y = y_board + row * cell_size
+                fill_color = board_colors[idx_cell]
+                draw.rectangle(
+                    [cell_x, cell_y, cell_x + cell_size - 6, cell_y + cell_size - 6],
+                    fill=fill_color,
+                    outline="#0f172a",
+                    width=3,
+                )
+                token_char = board[idx_cell]
+                if token_char != "_":
+                    text_w, text_h = measure(token_char)
+                    draw.text(
+                        (cell_x + (cell_size - text_w) / 2, cell_y + (cell_size - text_h) / 2),
+                        token_char,
+                        fill="#f8fafc",
+                        font=font,
+                    )
+
     img.save(path)
 
 
@@ -383,7 +426,10 @@ def introspect_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.dev
     idx = torch.tensor(context_tokens, dtype=torch.long, device=device).unsqueeze(0)
     with torch.no_grad():
         _, activations = model.forward_with_activations(idx)
-    render_activation_grid(activations, context_tokens, path)
+    board_context_tokens = context_tokens
+    board_slice = activations[-1] if activations else None
+    board_regions = board_slice
+    render_activation_grid(activations, board_context_tokens, path, board=board, board_embedding=board_regions)
     human_board = engine.pretty(board, colored=False)
     print("Generated introspection sample:")
     print(human_board)
