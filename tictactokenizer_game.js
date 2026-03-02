@@ -144,8 +144,8 @@ function forward(params, idx) {
     for (let t = 0; t < T; t++) {
       for (let h = 0; h < nHead; h++) {
         const qOffset = h * headDim;
-        const scores = new Array(T).fill(-Infinity);
-        for (let tp = 0; tp <= t; tp++) {
+        const scores = new Array(T);
+        for (let tp = 0; tp < T; tp++) {
           let dot = 0;
           for (let d = 0; d < headDim; d++) {
             dot += q[t][qOffset + d] * k[tp][qOffset + d];
@@ -154,7 +154,7 @@ function forward(params, idx) {
         }
         const weights = softmax(scores);
         const headVec = new Array(headDim).fill(0);
-        for (let tp = 0; tp <= t; tp++) {
+        for (let tp = 0; tp < T; tp++) {
           const weight = weights[tp];
           if (weight === 0) continue;
           for (let d = 0; d < headDim; d++) {
