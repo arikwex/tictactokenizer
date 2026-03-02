@@ -313,7 +313,7 @@ def render_activation_grid(
     token_ids: List[int],
     path: str,
     board: List[str] | None = None,
-    board_embedding: torch.Tensor | None = None,
+    board_activations: torch.Tensor | None = None,
 ) -> None:
     stage_labels = ["input"] + [f"block {i + 1}" for i in range(len(activations) - 1)]
     mats = [act.squeeze(0).cpu() for act in activations]
@@ -382,18 +382,17 @@ def render_activation_grid(
                     fill=color,
                 )
 
-    if board is not None and board_embedding is not None and board_column_width > 0:
+    if board is not None and board_activations is not None and board_column_width > 0:
         cell_size = board_column_width // 3
         board_height = cell_size * 3
         x_board = content_left + activation_width + board_spacing
         y_board = img_height - border - board_height
-        board_tensor = board_embedding.squeeze(0)
+        board_tensor = board_activations.squeeze(0)[-1]
         board_colors: List[Tuple[int, int, int]] = []
         for idx_cell in range(len(board)):
-            token_idx = min(1 + idx_cell, board_tensor.shape[0] - 1)
-            vec = board_tensor[token_idx]
-            mean_val = torch.tanh(vec.mean()).item()
-            board_colors.append(_value_to_color(mean_val))
+            token_idx = 2 + idx_cell
+            val = torch.tanh(board_tensor[token_idx]).item()
+            board_colors.append(_value_to_color(val))
         for row in range(3):
             for col in range(3):
                 idx_cell = row * 3 + col
@@ -425,11 +424,9 @@ def introspect_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.dev
     context_tokens = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]
     idx = torch.tensor(context_tokens, dtype=torch.long, device=device).unsqueeze(0)
     with torch.no_grad():
-        _, activations = model.forward_with_activations(idx)
+        board_activations, activations = model.forward_with_activations(idx)
     board_context_tokens = context_tokens
-    board_slice = activations[-1] if activations else None
-    board_regions = board_slice
-    render_activation_grid(activations, board_context_tokens, path, board=board, board_embedding=board_regions)
+    render_activation_grid(activations, board_context_tokens, path, board=board, board_activations=board_activations)
     human_board = engine.pretty(board, colored=False)
     print("Generated introspection sample:")
     print(human_board)
@@ -492,12 +489,31 @@ def model_choose_move(model: MicroGPT, board: List[str], device: torch.device, e
     return int(itos[MOVE_TOKEN_IDS[move_idx]])
 
 
-def interactive_loop(model: MicroGPT, device: torch.device) -> None:
+def maybe_introspect_during_play(
+    model: MicroGPT,
+    engine: TicTacToeEngine,
+    device: torch.device,
+    board: List[str],
+    introspect: bool,
+) -> None:
+    if not introspect:
+        return
+    tokens = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]
+    idx = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
+    with torch.no_grad():
+        board_activations, activations = model.forward_with_activations(idx)
+    path = "current_introspection.png"
+    render_activation_grid(activations, tokens, path, board=board, board_activations=board_activations)
+    print(f"Saved activation visualization to {path}")
+
+
+def interactive_loop(model: MicroGPT, device: torch.device, introspect: bool = False) -> None:
     engine = TicTacToeEngine()
     print("\nInteractive play started. You are X and move first. Ctrl+C to exit.\n")
     while True:
         board = ["_"] * 9
         print(engine.pretty(board))
+        maybe_introspect_during_play(model, engine, device, board, introspect)
         while True:
             print("\nYour move (enter 1-9 for the positions shown below):")
             print(engine.pretty(board, show_indices=True))
@@ -519,24 +535,29 @@ def interactive_loop(model: MicroGPT, device: torch.device) -> None:
             board[move - 1] = "X"
             print("\nYou played:")
             print(engine.pretty(board))
+            maybe_introspect_during_play(model, engine, device, board, introspect)
             winner = engine.check_winner(board)
             if winner or "_" not in board:
                 result = "draw" if winner == "draw" or winner is None else f"{winner} wins!"
                 print(f"Game over: {result}")
+                maybe_introspect_during_play(model, engine, device, board, introspect)
                 break
 
             ai_player = engine.current_player(board)
             ai_move = model_choose_move(model, board, device, engine)
             if ai_move == -1:
                 print("Model had no legal moves. Declaring draw.")
+                maybe_introspect_during_play(model, engine, device, board, introspect)
                 break
             board[ai_move - 1] = ai_player
             print(f"\nModel plays {ai_move} as {ai_player}:")
             print(engine.pretty(board))
+            maybe_introspect_during_play(model, engine, device, board, introspect)
             winner = engine.check_winner(board)
             if winner or "_" not in board:
                 result = "draw" if winner == "draw" or winner is None else f"{winner} wins!"
                 print(f"Game over: {result}")
+                maybe_introspect_during_play(model, engine, device, board, introspect)
                 break
 
         print("\nStarting a new game...\n")
@@ -665,10 +686,10 @@ def main() -> None:
 
     if args.preview:
         preview_model(model, engine, device)
-    if args.introspect:
+    if args.introspect and not args.play:
         introspect_model(model, engine, device)
     if args.play:
-        interactive_loop(model, device)
+        interactive_loop(model, device, introspect=args.introspect)
 
 
 if __name__ == "__main__":
