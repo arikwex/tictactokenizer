@@ -49,7 +49,7 @@ block_size = model_config["block_size"]  # BOS + 9 board cells + MOV
 n_head = model_config["n_head"]
 
 learning_rate, beta1, beta2, eps_adam = 0.01, 0.85, 0.99, 1e-8
-num_steps = 2000
+num_steps = 4000
 batch_size = 64
 weights_path = "tictactokenizer_weights.pt"
 
@@ -223,7 +223,7 @@ class MicroGPT(nn.Module):
         x = self.input_norm(x)
         for idx, block in enumerate(self.blocks):
             x = block(x)
-            x = self.post_block_norms[idx](x)
+            # x = self.post_block_norms[idx](x)
         logits = self.lm_head(x)
         return logits
 
@@ -236,7 +236,7 @@ class MicroGPT(nn.Module):
         activations = [x.detach().cpu()]
         for idx, block in enumerate(self.blocks):
             x = block(x)
-            x = self.post_block_norms[idx](x)
+            # x = self.post_block_norms[idx](x)
             activations.append(x.detach().cpu())
         logits = F.softmax(self.lm_head(x), dim=-1) * 2 - 1
         return logits, activations
@@ -248,7 +248,8 @@ def generate_training_sequence(
     board: List[str]
     while True:
         board = ["_"] * 9
-        # board = introspection_board.copy()
+        # if random.random() < 0.5:
+        #     board = introspection_board.copy()
         max_moves = random.randint(0, 8)
         for _ in range(max_moves):
             legal = engine.legal_moves(board)
@@ -606,8 +607,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if not (args.train or args.preview or args.play or args.introspect):
-        print("No action specified. Use one or more of --train, --preview, --play, --introspect.")
+    if not (args.train or args.play or args.introspect):
+        print("No action specified. Use one or more of --train, --play, --introspect.")
         return
 
     if torch.cuda.is_available():
