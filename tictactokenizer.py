@@ -35,8 +35,8 @@ MOV_ID = stoi["MOV"]
 MOVE_TOKEN_IDS = [stoi[str(i)] for i in range(1, 10)]
 vocab_size = len(TOKENS)
 print(f"vocab size: {vocab_size}")
-# introspection_board = ["_", "X", "O", "_", "X", "_", "_", "_", "_"]
-introspection_board = ["_", "_", "_", "_", "X", "_", "X", "O", "_"]
+introspection_board = ["_", "X", "O", "_", "X", "_", "_", "_", "_"]
+# introspection_board = ["_", "_", "_", "_", "X", "_", "X", "O", "_"]
 
 # Hyperparameters loaded from shared config
 MODEL_CONFIG_PATH = "model_config.json"
@@ -48,9 +48,9 @@ n_embd = model_config["n_embd"]
 block_size = model_config["block_size"]  # BOS + 9 board cells + MOV
 n_head = model_config["n_head"]
 
-learning_rate, beta1, beta2, eps_adam = 0.006, 0.85, 0.99, 1e-8
+learning_rate, beta1, beta2, eps_adam = 0.01, 0.85, 0.99, 1e-8
 num_steps = 2000
-batch_size = 8
+batch_size = 64
 weights_path = "tictactokenizer_weights.pt"
 
 class TicTacToeEngine:
@@ -169,13 +169,6 @@ class MultiHeadAttention(nn.Module):
         self.wk = nn.Linear(n_embd, n_embd, bias=False)
         self.wv = nn.Linear(n_embd, n_embd, bias=False)
         self.wo = nn.Linear(n_embd, n_embd, bias=False)
-        # mask = torch.tril(torch.ones(block_size, block_size, dtype=torch.bool)).view(
-        #     1, 1, block_size, block_size
-        # )
-        mask = torch.ones(block_size, block_size, dtype=torch.bool).view(
-            1, 1, block_size, block_size
-        )
-        self.register_buffer("mask", mask, persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, C = x.shape
@@ -183,7 +176,6 @@ class MultiHeadAttention(nn.Module):
         k = self.wk(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         v = self.wv(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         attn = (q @ k.transpose(-2, -1)) * (self.head_dim ** -0.5)
-        attn = attn.masked_fill(self.mask[:, :, :T, :T] == 0, float("-inf"))
         weights = F.softmax(attn, dim=-1)
         out = weights @ v
         out = out.transpose(1, 2).contiguous().view(B, T, C)
@@ -251,11 +243,12 @@ class MicroGPT(nn.Module):
 
 
 def generate_training_sequence(
-    engine: TicTacToeEngine, return_state: bool = False
+    engine: TicTacToeEngine
 ) -> List[int] | Tuple[List[int], List[str], int]:
     board: List[str]
     while True:
         board = ["_"] * 9
+        # board = introspection_board.copy()
         max_moves = random.randint(0, 8)
         for _ in range(max_moves):
             legal = engine.legal_moves(board)
@@ -268,10 +261,10 @@ def generate_training_sequence(
         if engine.check_winner(board) is None and engine.legal_moves(board):
             break
 
+    # if engine.pretty(board) == engine.pretty(introspection_board):
+    #     print("!!!!!!! TRAINING ON INTROSPECTION BOARD !!!!!!!")
     move = engine.select_best_move(board)
     seq = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID, stoi[str(move + 1)]]
-    if return_state:
-        return seq, board.copy(), move
     return seq
 
 
@@ -286,7 +279,7 @@ def sample_batch(
     mask = torch.zeros((batch_size, block_size), dtype=torch.float32)
     for i in range(batch_size):
         seq = generate_training_sequence(engine)
-        seq = seq[: block_size + 1]
+        # seq = seq[: block_size + 1]
         seq_len = len(seq) - 1
         x[i, :seq_len] = torch.tensor(seq[:-1], dtype=torch.long)
         y[i, :seq_len] = torch.tensor(seq[1:], dtype=torch.long)
