@@ -14,6 +14,7 @@ from typing import List, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from PIL import Image, ImageDraw, ImageFont
 
 random.seed(42)
 torch.manual_seed(42)
@@ -198,6 +199,19 @@ class MicroGPT(nn.Module):
         logits = self.lm_head(x)
         return logits
 
+    def forward_with_activations(self, idx: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        B, T = idx.shape
+        assert T <= self.block_size, "sequence length exceeds block size"
+        positions = torch.arange(T, device=idx.device).unsqueeze(0)
+        x = self.token_emb(idx) + self.pos_emb(positions)
+        x = self.input_norm(x)
+        activations = [x.detach().cpu()]
+        for block in self.blocks:
+            x = block(x)
+            activations.append(x.detach().cpu())
+        logits = self.lm_head(x)
+        return logits, activations
+
 
 def generate_training_sequence(
     engine: TicTacToeEngine, return_state: bool = False
@@ -281,6 +295,85 @@ def sample_batch(
             raise RuntimeError("training sequence missing MOV token") from exc
         mask[i, mov_idx] = 1.0
     return x.to(device), y.to(device), mask.to(device)
+
+
+def _value_to_grayscale(val: float) -> int:
+    clipped = max(-1.0, min(1.0, float(val)))
+    normalized = (clipped + 1.0) * 0.5  # map [-1, 1] -> [0, 1]
+    return int(round(normalized * 255))
+
+
+def render_activation_grid(activations: List[torch.Tensor], token_ids: List[int], path: str) -> None:
+    stage_labels = ["input"] + [f"block {i + 1}" for i in range(len(activations) - 1)]
+    mats = [act.squeeze(0).cpu() for act in activations]
+    token_count = mats[0].shape[0]
+    embed_dim = mats[0].shape[1]
+    assert len(token_ids) == token_count, "token count mismatch"
+
+    border = 20
+    stage_spacing = 30
+    token_spacing = 14
+    dim_height = 6
+    cell_width = 18
+    label_height = 18
+    row_label_width = 50
+
+    cell_height = embed_dim * dim_height
+    content_top = border + label_height + 8
+    content_left = border + row_label_width
+    img_width = content_left + len(mats) * cell_width + (len(mats) - 1) * stage_spacing + border
+    img_height = content_top + token_count * cell_height + (token_count - 1) * token_spacing + border
+    img = Image.new("RGB", (img_width, img_height), color="white")
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default()
+
+    # Stage labels
+    def measure(text: str) -> Tuple[int, int]:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    for idx_stage, label in enumerate(stage_labels):
+        x = content_left + idx_stage * (cell_width + stage_spacing)
+        text_w, text_h = measure(label)
+        draw.text((x + (cell_width - text_w) / 2, border + (label_height - text_h) / 2), label, fill="#0f172a", font=font)
+
+    token_labels = [itos[token_id] for token_id in token_ids]
+    for token_idx, label in enumerate(token_labels):
+        y = content_top + token_idx * (cell_height + token_spacing)
+        text_w, text_h = measure(label)
+        draw.text((border + row_label_width - text_w - 6, y + (cell_height - text_h) / 2), label, fill="#475569", font=font)
+
+    for stage_idx, stage_mat in enumerate(mats):
+        x0 = content_left + stage_idx * (cell_width + stage_spacing)
+        for token_idx in range(token_count):
+            y0 = content_top + token_idx * (cell_height + token_spacing)
+            vec = stage_mat[token_idx]
+            for dim_idx in range(embed_dim):
+                val = vec[dim_idx].item()
+                color = _value_to_grayscale(val)
+                y_start = y0 + dim_idx * dim_height
+                y_end = y_start + dim_height - 1
+                draw.rectangle(
+                    [x0, y_start, x0 + cell_width - 1, y_end],
+                    fill=(color, color, color),
+                )
+
+    img.save(path)
+
+
+def introspect_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.device, path: str = "introspect_activations.png") -> None:
+    model.eval()
+    board, move = engine.random_state_and_move()
+    context_tokens = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]
+    idx = torch.tensor(context_tokens, dtype=torch.long, device=device).unsqueeze(0)
+    with torch.no_grad():
+        _, activations = model.forward_with_activations(idx)
+    render_activation_grid(activations, context_tokens, path)
+    human_board = engine.pretty(board, colored=False)
+    print("Generated introspection sample:")
+    print(human_board)
+    print(f"Target move: {move + 1}")
+    print(f"Saved activation visualization to {path}")
 
 
 def preview_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.device, samples: int = 5) -> None:
@@ -473,13 +566,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Launch the interactive CLI game against the model.",
     )
+    parser.add_argument(
+        "--introspect",
+        action="store_true",
+        help="Render a PNG visualization of activations across transformer blocks.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if not (args.train or args.preview or args.play):
-        print("No action specified. Use one or more of --train, --preview, --play.")
+    if not (args.train or args.preview or args.play or args.introspect):
+        print("No action specified. Use one or more of --train, --preview, --play, --introspect.")
         return
 
     if torch.cuda.is_available():
@@ -506,6 +604,8 @@ def main() -> None:
 
     if args.preview:
         preview_model(model, engine, device)
+    if args.introspect:
+        introspect_model(model, engine, device)
     if args.play:
         interactive_loop(model, device)
 
