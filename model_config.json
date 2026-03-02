@@ -1,6 +1,6 @@
 {
-  "n_layer": 2,
-  "n_embd": 12,
+  "n_layer": 3,
+  "n_embd": 24,
   "block_size": 11,
   "n_head": 4
 }

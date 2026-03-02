@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 from typing import List, Tuple
@@ -35,8 +36,7 @@ MOV_ID = stoi["MOV"]
 MOVE_TOKEN_IDS = [stoi[str(i)] for i in range(1, 10)]
 vocab_size = len(TOKENS)
 print(f"vocab size: {vocab_size}")
-introspection_board = ["_", "X", "O", "_", "X", "_", "_", "_", "_"]
-# introspection_board = ["_", "_", "_", "_", "X", "_", "X", "O", "_"]
+DEFAULT_INTROSPECTION_BOARD = ["_", "X", "O", "_", "X", "_", "_", "_", "_"]
 
 # Hyperparameters loaded from shared config
 MODEL_CONFIG_PATH = "model_config.json"
@@ -49,9 +49,11 @@ block_size = model_config["block_size"]  # BOS + 9 board cells + MOV
 n_head = model_config["n_head"]
 
 learning_rate, beta1, beta2, eps_adam = 0.01, 0.85, 0.99, 1e-8
-num_steps = 4000
+num_steps = 40000
 batch_size = 128
 weights_path = "tictactokenizer_weights.pt"
+INTROSPECTION_INTERVAL = 100
+DEFAULT_MOVIE_OUTPUT = "training_introspections.gif"
 
 class TicTacToeEngine:
     WIN_PATTERNS: Tuple[Tuple[int, int, int], ...] = (
@@ -245,8 +247,6 @@ def generate_training_sequence(
     board: List[str]
     while True:
         board = ["_"] * 9
-        # if random.random() < 0.5:
-        #     board = introspection_board.copy()
         max_moves = random.randint(0, 8)
         for _ in range(max_moves):
             legal = engine.legal_moves(board)
@@ -259,8 +259,6 @@ def generate_training_sequence(
         if engine.check_winner(board) is None and engine.legal_moves(board):
             break
 
-    # if engine.pretty(board) == engine.pretty(introspection_board):
-    #     print("!!!!!!! TRAINING ON INTROSPECTION BOARD !!!!!!!")
     move = engine.select_best_move(board)
     seq = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID, stoi[str(move + 1)]]
     return seq
@@ -292,6 +290,41 @@ def sample_batch(
     return x.to(device), y.to(device), mask.to(device)
 
 
+def generate_introspection_boards(count: int, seed: int = 0) -> List[List[str]]:
+    """
+    Create reproducible board states by playing random legal moves.
+    """
+    if count <= 0:
+        raise ValueError("count must be positive for introspection boards")
+    rng = random.Random(seed)
+    boards: List[List[str]] = []
+    attempts = 0
+    while len(boards) < count:
+        engine = TicTacToeEngine()
+        moves_to_play = len(boards)//2+2
+        for _ in range(moves_to_play):
+            legal = engine.legal_moves()
+            if not legal:
+                break
+            move = rng.choice(legal)
+            if 4 in legal and rng.random() < 0.5:
+                move = 4
+            engine.apply_move(move)
+            if engine.check_winner():
+                break
+        # Disallow boards that are already won.
+        if engine.check_winner() is not None:
+            continue
+        board_state = engine.board.copy()
+        if board_state not in boards:
+            boards.append(board_state)
+        attempts += 1
+        if attempts > count * 200 and len(boards) < count:
+            # Fallback in the unlikely event of too many duplicates.
+            boards.append(["_"] * 9)
+    return boards
+
+
 def _value_to_color(val: float) -> Tuple[int, int, int]:
     clipped = max(-1.0, min(1.0, float(val)))
     t = (clipped + 1.0) * 0.5  # map [-1, 1] -> [0, 1]
@@ -306,10 +339,10 @@ def _value_to_color(val: float) -> Tuple[int, int, int]:
 def render_activation_grid(
     activations: List[torch.Tensor],
     token_ids: List[int],
-    path: str,
+    path: str | None,
     board: List[str] | None = None,
     board_activations: torch.Tensor | None = None,
-) -> None:
+) -> Image.Image:
     stage_labels = ["input"] + [f"block {i + 1}" for i in range(len(activations) - 1)]
     mats = [act.squeeze(0).cpu() for act in activations]
     token_count = mats[0].shape[0]
@@ -317,9 +350,9 @@ def render_activation_grid(
     assert len(token_ids) == token_count, "token count mismatch"
 
     border = 20
-    stage_spacing = 30
-    token_spacing = 14
-    dim_height = 6
+    stage_spacing = 20
+    token_spacing = 10
+    dim_height = 1
     cell_width = 18
     label_height = 18
     row_label_width = 50
@@ -386,7 +419,7 @@ def render_activation_grid(
         board_colors: List[Tuple[int, int, int]] = []
         argmax_idx = -1
         max_val = -float("inf")
-        print(board_tensor)
+        # print(board_tensor)
         for idx_cell in range(len(board)):
             token_idx = 2 + idx_cell
             val = torch.tanh(board_tensor[token_idx]).item()
@@ -417,20 +450,63 @@ def render_activation_grid(
                         font=font,
                     )
 
-    img.save(path)
+    if path is not None:
+        img.save(path)
+    return img
 
 
-def introspect_model(model: MicroGPT, engine: TicTacToeEngine, device: torch.device, board: List[str], path: str = "current_introspection.png") -> None:
+def build_image_grid(
+    images: List[Image.Image],
+    grid_size: int,
+    padding: int = 16,
+    background_color: Tuple[int, int, int] = (5, 6, 10),
+) -> Image.Image:
+    if not images:
+        raise ValueError("at least one image is required to build a grid")
+    if grid_size * grid_size != len(images):
+        raise ValueError("image count must match grid_size squared")
+    cell_w, cell_h = images[0].size
+    grid_w = grid_size * cell_w + (grid_size + 1) * padding
+    grid_h = grid_size * cell_h + (grid_size + 1) * padding
+    grid_img = Image.new("RGB", (grid_w, grid_h), color=background_color)
+    for idx, img in enumerate(images):
+        if img.size != (cell_w, cell_h):
+            raise ValueError("all images must have the same dimensions")
+        row = idx // grid_size
+        col = idx % grid_size
+        x = padding + col * (cell_w + padding)
+        y = padding + row * (cell_h + padding)
+        grid_img.paste(img, (x, y))
+    return grid_img
+
+
+def introspect_model(
+    model: MicroGPT,
+    engine: TicTacToeEngine,
+    device: torch.device,
+    board: List[str],
+    path: str | None = "current_introspection.png",
+    log: bool = True,
+) -> Image.Image:
     model.eval()
     context_tokens = [BOS_ID] + [stoi[cell] for cell in board] + [MOV_ID]
     idx = torch.tensor(context_tokens, dtype=torch.long, device=device).unsqueeze(0)
     with torch.no_grad():
         board_activations, activations = model.forward_with_activations(idx)
-    render_activation_grid(activations, context_tokens, path, board=board, board_activations=board_activations)
-    human_board = engine.pretty(board, colored=False)
-    print("Generated introspection sample:")
-    print(human_board)
-    print(f"Saved activation visualization to {path}")
+    image = render_activation_grid(
+        activations,
+        context_tokens,
+        path,
+        board=board,
+        board_activations=board_activations,
+    )
+    if log:
+        human_board = engine.pretty(board, colored=False)
+        print("Generated introspection sample:")
+        print(human_board)
+        if path:
+            print(f"Saved activation visualization to {path}")
+    return image
 
 
 def model_choose_move(model: MicroGPT, board: List[str], device: torch.device, engine: TicTacToeEngine) -> int:
@@ -551,8 +627,21 @@ def run_training(
     engine: TicTacToeEngine,
     device: torch.device,
     introspect: bool = False,
+    introspection_boards: List[List[str]] | None = None,
+    movie: bool = False,
+    movie_grid_size: int | None = None,
+    movie_path: str = DEFAULT_MOVIE_OUTPUT,
 ) -> None:
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, betas=(beta1, beta2), eps=eps_adam)
+    boards: List[List[str]] = introspection_boards or [DEFAULT_INTROSPECTION_BOARD.copy()]
+    grid_size = movie_grid_size
+    if movie:
+        if not introspection_boards:
+            raise ValueError("movie capture requires introspection boards")
+        grid_size = grid_size or max(1, int(math.isqrt(len(introspection_boards))))
+        if grid_size * grid_size != len(introspection_boards):
+            raise ValueError("movie grid size does not match the number of introspection boards")
+    movie_frames: List[Image.Image] = []
 
     for step in range(num_steps):
         model.train()
@@ -572,11 +661,50 @@ def run_training(
         optimizer.step()
         print(f"step {step + 1:4d} / {num_steps:4d} | loss {loss.item():.4f}", end="\r")
 
-        if introspect and (step + 1) % 100 == 0:
-            introspect_model(model, engine, device, introspection_board)
+        should_capture = (introspect or movie) and (step + 1) % INTROSPECTION_INTERVAL == 0
+        if should_capture:
+            board_source = boards[0]
+            save_path = "current_introspection.png" if introspect else None
+            log_capture = bool(introspect)
+            primary_image = introspect_model(
+                model,
+                engine,
+                device,
+                board_source,
+                path=save_path,
+                log=log_capture,
+            )
+            if movie:
+                frame_images: List[Image.Image] = []
+                for idx, board in enumerate(boards):
+                    if idx == 0:
+                        frame_images.append(primary_image.copy())
+                        continue
+                    img = introspect_model(
+                        model,
+                        engine,
+                        device,
+                        board,
+                        path=None,
+                        log=False,
+                    )
+                    frame_images.append(img)
+                grid_dim = grid_size or 1
+                movie_frames.append(build_image_grid(frame_images, grid_dim))
 
     save_quantized_weights(model, weights_path)
     print(f"\nSaved quantized weights to {weights_path}")
+    if movie and movie_frames:
+        movie_frames[0].save(
+            movie_path,
+            save_all=True,
+            append_images=movie_frames[1:],
+            duration=200,
+            loop=0,
+        )
+        print(f"Saved introspection movie to {movie_path}")
+    elif movie:
+        print("Movie flag was provided, but no introspection steps were captured; skipping GIF creation.")
 
 
 def parse_args() -> argparse.Namespace:
@@ -599,7 +727,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Render a PNG visualization of activations across transformer blocks.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--movie",
+        action="store_true",
+        help="Create a GIF of introspection grids captured throughout training (requires --train).",
+    )
+    args = parser.parse_args()
+    if args.movie and not args.train:
+        parser.error("--movie requires --train.")
+    return args
 
 
 def main() -> None:
@@ -618,20 +754,35 @@ def main() -> None:
     engine = TicTacToeEngine()
     model = MicroGPT(vocab_size, n_embd, n_head, n_layer, block_size).to(device)
     expected_bytes = _param_count(model)
+    board_grid_size = 3
+    introspection_boards = generate_introspection_boards(board_grid_size * board_grid_size, seed=43)
+    if introspection_boards:
+        introspection_boards[0] = DEFAULT_INTROSPECTION_BOARD.copy()
+    movie_output_path = DEFAULT_MOVIE_OUTPUT
 
     weights_exist = os.path.exists(weights_path) and os.path.getsize(weights_path) == expected_bytes
 
     if args.train or not weights_exist:
         if not args.train and not weights_exist:
             print("Weights missing or invalid size; training a new model.")
-        run_training(model, engine, device, introspect=args.introspect)
+        run_training(
+            model,
+            engine,
+            device,
+            introspect=args.introspect,
+            introspection_boards=introspection_boards,
+            movie=args.movie,
+            movie_grid_size=board_grid_size,
+            movie_path=movie_output_path,
+        )
     else:
         load_quantized_weights(model, weights_path)
         model.to(device)
         print(f"Loaded weights from {weights_path}")
 
     if args.introspect and not args.play:
-        introspect_model(model, engine, device, introspection_board)
+        board_source = introspection_boards[0] if introspection_boards else DEFAULT_INTROSPECTION_BOARD
+        introspect_model(model, engine, device, board_source)
     if args.play:
         interactive_loop(model, device, introspect=args.introspect)
 
